@@ -4,7 +4,9 @@ from sqlalchemy import create_engine
 
 from printapp_sqlalchemy_config import RDSCONSTRING, USER, PASSWORD, DATABASE
 
-engine = create_engine("mysql://{0}:{1}@{2}/{3}".format(USER,PASSWORD,RDSCONSTRING,DATABASE))
+connectionUri = "mysql://{0}:{1}@{2}/{3}".format(USER,PASSWORD,RDSCONSTRING,DATABASE)
+
+engine = create_engine(connectionUri)
 Base = automap_base()
 
 Base.prepare(engine, reflect=True)
