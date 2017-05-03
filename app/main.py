@@ -1,7 +1,7 @@
-from flask import Flask
-from flask_restplus import Resource, Api
-from flask_restplus import Resource, fields
+from flask import Flask, request
+from flask_restplus import Resource, Api, fields
 from flask_sqlalchemy import SQLAlchemy
+from flask_cors import CORS
 
 from printapp_sqlalchemy.printapp_sqlalchemy import (Filament,
                                                      ColorFamily,
@@ -13,6 +13,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = connectionUri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 api = Api(app)
 db = SQLAlchemy(app)
+CORS(app)
 
 filamentDetailModel = api.model('FilamentModel', {
     'FilamentId': fields.Integer,
@@ -20,7 +21,7 @@ filamentDetailModel = api.model('FilamentModel', {
     'UserFilamentId': fields.Integer,
     'Material': fields.String,
     'Brand': fields.String,
-    'Color': fields.String,
+    'Color': fields.String(attribute='ColorFamilyName'),
     'LengthRemain': fields.Integer,
     'DateAcquired': fields.Date,
     'FilamentSource': fields.String,
@@ -29,7 +30,14 @@ filamentDetailModel = api.model('FilamentModel', {
 
 filamentColorModel = api.model('FilamentColor', {
     'ColorId': fields.Integer(attribute='ColorFamilyId'),
-    'Color': fields.String(attribute="ColorFamilyName")
+    'Color': fields.String(attribute='ColorFamilyName')
+})
+
+
+printPrinterModel = api.model('PrintPrinterModel', {
+    'PrintId': fields.Integer,
+    'PrintName': fields.String,
+    'MainPrintImageUrl': fields.String
 })
 
 printerDetailModel = api.model('PrinterModel', {
@@ -47,8 +55,10 @@ printerDetailModel = api.model('PrinterModel', {
     'WireMaintLast': fields.Integer,
     'LubeMaintInt': fields.Integer,
     'LubeMaintLast': fields.Integer,
-    'MainPrinterImageUrl': fields.String
+    'MainPrinterImageUrl': fields.String,
+    'Prints': fields.List(fields.Nested(printPrinterModel), attribute='PrintList')
 })
+
 
 printDetailModel = api.model('PrintModel', {
     'PrintId': fields.Integer,
@@ -62,9 +72,6 @@ printDetailModel = api.model('PrintModel', {
     'MainPrintImageUrl': fields.String,
     'FilamentId': fields.Integer,
     'FilamentName': fields.String,
-    'FilamentBrand': fields.String,
-    'FilamentMaterial': fields.String,
-    'FilamentColor': fields.String,
     'PrinterId': fields.Integer,
     'PrinterName': fields.String,
     'PrintDate': fields.Date,
@@ -79,10 +86,18 @@ class HelloWorld(Resource):
 @api.route('/filaments/filamentdetails/<int:filament_id>')
 @api.doc(params={'filament_id': 'Global filament id.'})
 class FilamentResp(Resource):
-    @api.marshal_with(filamentDetailModel)
+    @api.marshal_with(filamentDetailModel, envelope='data')
     def get(self, filament_id):
-        filament = db.session.query(Filament).filter(Filament.FilamentId == filament_id).one_or_none()
-        http_resp = 404 if filament is None else 200
+        row = db.session.query(Filament,
+                                     ColorFamily.ColorFamilyName)\
+                    .outerjoin(ColorFamily)\
+                    .filter(Filament.FilamentId == filament_id)\
+                    .one_or_none()
+
+        filament = row.filaments
+        filament.ColorFamilyName = row.ColorFamilyName
+
+        http_resp = 404 if row is None else 200
         return filament, http_resp
 
 @api.route('/filaments/<int:user_id>')
@@ -90,11 +105,20 @@ class FilamentResp(Resource):
 class FilamentLibraryResp(Resource):
     @api.marshal_with(filamentDetailModel, envelope="data")
     def get(self, user_id):
-        filaments = db.session.query(Filament)\
+        rows = db.session.query(Filament,
+                                     ColorFamily.ColorFamilyName)\
+                    .outerjoin(ColorFamily)\
                     .filter(Filament.UserId == user_id)\
                     .order_by(Filament.UserFilamentId.asc())\
                     .all()
-        http_resp = 404 if filaments is None else 200
+
+        filaments = []
+        for row in rows:
+            filament = row.filaments
+            filament.ColorFamilyName = row.ColorFamilyName
+            filaments.append(filament)
+
+        http_resp = 404 if rows is None else 200
         return filaments, http_resp
 
 @api.route('/filaments/colors')
@@ -130,26 +154,56 @@ class PrinterLibraryResp(Resource):
 @api.route('/printers/printerdetails/<int:printer_id>')
 @api.doc(params={'printer_id': 'Global ID of printer.'})
 class PrinterDetailResp(Resource):
-    @api.marshal_with(printerDetailModel)
+    @api.marshal_with(printerDetailModel, envelope='data')
     def get(self, printer_id):
         printer = db.session.query(Printer, Image.ImagePath.label("MainPrinterImageUrl"))\
                     .outerjoin(Image, Image.ImageId == Printer.MainPrinterImageId)\
                     .filter(Printer.PrinterId == printer_id).one_or_none()
+
+        prints = db.session.query(Print, Image.ImagePath.label("MainPrintImageUrl"))\
+                    .outerjoin(Image, Image.ImageId == Print.MainPrintImageId)\
+                    .filter(Print.PrinterId == printer_id).all()
+
         retPrinter = printer.printers
         retPrinter.MainPrinterImageUrl = printer.MainPrinterImageUrl
+        retPrinter.PrintList = []
+
+        for prt in prints:
+            retPrint = prt.prints
+            retPrint.MainPrintImageUrl = prt.MainPrintImageUrl
+            retPrinter.PrintList.append(retPrint)
 
         http_resp = 404 if printer is None else 200
         return retPrinter, http_resp
+
+    @api.marshal_with(printerDetailModel, envelope="data")
+    def put(self, printer_id):
+        data = request.get_json()
+        printer = db.session.query(Printer).filter(Printer.PrinterId == printer_id).one_or_none()
+
+        printer.PrinterName = data['PrinterName']
+        printer.DateAcquired = data['DateAcquired']
+        printer.PrinterSource = data['PrinterSource']
+        printer.BeltMaintInt = data['BeltMaintInt']
+        printer.WireMaintInt = data['WireMaintInt']
+        db.session.add(printer);
+        db.session.commit();
+        return printer
+
+
 
 
 @api.route('/prints/<int:user_id>')
 @api.doc(params={'user_id': 'ID of user to retrieve info for.'})
 class PrintLibraryResp(Resource):
-    @api.marshal_with(printDetailModel)
+    @api.marshal_with(printDetailModel, envelope='data')
     def get(self, user_id):
         rows = db.session.query(Print,
                                 Filament.FilamentId,
+                                Filament.Brand,
+                                Filament.Material,
                                 Printer.PrinterId,
+                                Printer.PrinterName,
                                 Image.ImagePath.label("MainPrintImageUrl"))\
                     .outerjoin(Image, Image.ImageId == Print.MainPrintImageId)\
                     .outerjoin(Filament, Filament.FilamentId == Print.FilamentId)\
@@ -161,7 +215,9 @@ class PrintLibraryResp(Resource):
             pt = row.prints
             pt.MainPrintImageUrl = row.MainPrintImageUrl
             pt.FilamentId = row.FilamentId
+            pt.FilamentName = '{0} {1}'.format(row.Brand, row.Material)
             pt.PrinterId = row.PrinterId
+            pt.PrinterName = row.PrinterName
             prints.append(pt)
 
         http_resp = 404 if rows is None else 200
@@ -171,14 +227,17 @@ class PrintLibraryResp(Resource):
 @api.route('/prints/printdetails/<int:print_id>')
 @api.doc(params={'print_id': 'Global ID of print to retrieve.'})
 class PrintDetailResp(Resource):
-    @api.marshal_with(printDetailModel)
+    @api.marshal_with(printDetailModel, envelope='data')
     def get(self, print_id):
         rows = db.session.query(Print,
+                                Filament.UserFilamentId,
                                 Filament.FilamentId,
                                 Filament.Brand,
                                 Filament.Material,
                                 ColorFamily.ColorFamilyName,
                                 Printer.PrinterId,
+                                Printer.PrinterName,
+                                Printer.UserPrinterId,
                                 Image.ImagePath.label("MainPrintImageUrl"))\
                     .outerjoin(Image, Image.ImageId == Print.MainPrintImageId)\
                     .outerjoin(Filament, Filament.FilamentId == Print.FilamentId)\
@@ -187,14 +246,15 @@ class PrintDetailResp(Resource):
                     .filter(Print.PrintId == print_id).one_or_none()
 
         pt = rows.prints
-        pt.FilamentBrand = rows.Brand
-        pt.FilamentMaterial = rows.Material
-        pt.FilamentColor = rows.ColorFamilyName
         pt.PrinterId = rows.PrinterId
         pt.FilamentId = rows.FilamentId
+        pt.FilamentName = "{0} {1} ({2}) - Spool {3}".format(rows.Brand, rows.Material, rows.ColorFamilyName, rows.UserFilamentId)
+        pt.PrinterName = "{0} - Printer {1}".format(rows.PrinterName, rows.UserPrinterId)
+        pt.MainPrintImageUrl = rows.MainPrintImageUrl
 
         http_resp = 404 if rows is None else 200
         return pt, http_resp
 
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host='0.0.0.0', debug=True)
