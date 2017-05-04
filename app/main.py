@@ -3,9 +3,13 @@ from flask_restplus import Resource, Api, fields
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 
+from helper_methods import update_resource
 from printapp_sqlalchemy.printapp_sqlalchemy import (Filament,
                                                      ColorFamily,
-                                                     Printer, Print, connectionUri, Image
+                                                     Printer,
+                                                     Print,
+                                                     connectionUri,
+                                                     Image
                                                      )
 
 app = Flask(__name__)
@@ -14,6 +18,12 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 api = Api(app)
 db = SQLAlchemy(app)
 CORS(app)
+
+printPrinterModel = api.model('PrintPrinterModel', {
+    'PrintId': fields.Integer,
+    'PrintName': fields.String,
+    'MainPrintImageUrl': fields.String
+})
 
 filamentDetailModel = api.model('FilamentModel', {
     'FilamentId': fields.Integer,
@@ -25,19 +35,14 @@ filamentDetailModel = api.model('FilamentModel', {
     'LengthRemain': fields.Integer,
     'DateAcquired': fields.Date,
     'FilamentSource': fields.String,
-    'HtmlColor': fields.String
+    'HtmlColor': fields.String,
+    'ColorId': fields.Integer(attribute='ColorFamilyId'),
+    'Prints': fields.List(fields.Nested(printPrinterModel))
 })
 
 filamentColorModel = api.model('FilamentColor', {
     'ColorId': fields.Integer(attribute='ColorFamilyId'),
     'Color': fields.String(attribute='ColorFamilyName')
-})
-
-
-printPrinterModel = api.model('PrintPrinterModel', {
-    'PrintId': fields.Integer,
-    'PrintName': fields.String,
-    'MainPrintImageUrl': fields.String
 })
 
 printerDetailModel = api.model('PrinterModel', {
@@ -94,11 +99,47 @@ class FilamentResp(Resource):
                     .filter(Filament.FilamentId == filament_id)\
                     .one_or_none()
 
+        if row is None:
+            return None, 404
+
+        prints = db.session.query(Print, Image.ImagePath.label('MainPrintImageUrl'))\
+                    .outerjoin(Image, Print.MainPrintImageId == Image.ImageId)\
+                    .filter(Print.FilamentId == filament_id)\
+                    .all()
+
         filament = row.filaments
         filament.ColorFamilyName = row.ColorFamilyName
+        filament.Prints = []
 
-        http_resp = 404 if row is None else 200
-        return filament, http_resp
+        for prntRow in prints:
+            prnt = prntRow.prints
+            prnt.MainPrintImageUrl = prntRow.MainPrintImageUrl
+            filament.Prints.append(prnt)
+
+        return filament
+
+    @api.marshal_with(filamentDetailModel, envelope='data')
+    def put(self, filament_id):
+        filament = db.session.query(Filament).filter(Filament.FilamentId == filament_id).one_or_none()
+        if filament is None:
+            return None, 404
+
+        data = request.get_json()
+
+        filament.Brand = data['Brand'] if data['Brand'] is not None else filament.Brand
+        filament.Material = data['Material'] if data['Material'] is not None else filament.Material
+        filament.LengthRemain = data['LengthRemain'] if data['LengthRemain'] is not None else filament.LengthRemain
+
+        # careful as this particular property is named differently in json
+        filament.ColorFamilyId = data['ColorId'] if data['ColorId'] is not None else filament.ColorFamilyId
+        filament.FilamentSource = data['FilamentSource'] if data['FilamentSource'] is not None else filament.FilamentSource
+        filament.DateAcquired = data['DateAcquired'] if data['DateAcquired'] is not None else filament.DateAcquired
+        filament.HtmlColor = data['HtmlColor'] if data['HtmlColor'] is not None else filament.HtmlColor
+
+        db.session.add(filament)
+        db.session.commit()
+        return filament
+
 
 @api.route('/filaments/<int:user_id>')
 @api.doc(params={'user_id': 'ID of the user to retrieve info for.'})
@@ -160,6 +201,9 @@ class PrinterDetailResp(Resource):
                     .outerjoin(Image, Image.ImageId == Printer.MainPrinterImageId)\
                     .filter(Printer.PrinterId == printer_id).one_or_none()
 
+        if printer is None:
+            return None, 404
+
         prints = db.session.query(Print, Image.ImagePath.label("MainPrintImageUrl"))\
                     .outerjoin(Image, Image.ImageId == Print.MainPrintImageId)\
                     .filter(Print.PrinterId == printer_id).all()
@@ -180,12 +224,16 @@ class PrinterDetailResp(Resource):
     def put(self, printer_id):
         data = request.get_json()
         printer = db.session.query(Printer).filter(Printer.PrinterId == printer_id).one_or_none()
+        if printer is None:
+            return None, 404
 
-        printer.PrinterName = data['PrinterName']
-        printer.DateAcquired = data['DateAcquired']
-        printer.PrinterSource = data['PrinterSource']
-        printer.BeltMaintInt = data['BeltMaintInt']
-        printer.WireMaintInt = data['WireMaintInt']
+        printer.PrinterName = data['PrinterName'] if data['PrinterName'] is not None else printer.PrinterName
+        printer.DateAcquired = data['DateAcquired'] if data['DateAcquired'] is not None else printer.DateAcquired
+        printer.PrinterSource = data['PrinterSource'] if data['PrinterSource'] is not None else printer.PrinterSource
+        printer.BeltMaintInt = data['BeltMaintInt'] if data['BeltMaintInt'] is not None else printer.BeltMaintInt
+        printer.WireMaintInt = data['WireMaintInt'] if data['WireMaintInt'] is not None else printer.WireMaintInt
+        printer.LubeMaintInt = data['LubeMaintInt'] if data['LubeMaintInt'] is not None else printer.LubeMaintInt
+
         db.session.add(printer);
         db.session.commit();
         return printer
@@ -244,6 +292,9 @@ class PrintDetailResp(Resource):
                     .outerjoin(ColorFamily, ColorFamily.ColorFamilyId == Filament.ColorFamilyId)\
                     .outerjoin(Printer, Printer.PrinterId == Print.PrinterId)\
                     .filter(Print.PrintId == print_id).one_or_none()
+
+        if rows is None:
+            return None, 404
 
         pt = rows.prints
         pt.PrinterId = rows.PrinterId
