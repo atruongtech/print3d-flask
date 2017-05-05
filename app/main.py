@@ -3,7 +3,6 @@ from flask_restplus import Resource, Api, fields
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 
-from helper_methods import update_resource
 from printapp_sqlalchemy.printapp_sqlalchemy import (Filament,
                                                      ColorFamily,
                                                      Printer,
@@ -72,7 +71,6 @@ printDetailModel = api.model('PrintModel', {
     'SourceUrl': fields.String,
     'ModelPath': fields.String,
     'Success': fields.Boolean,
-    'PrintTimeHours': fields.Integer,
     'PrintTimeMinutes': fields.Integer,
     'MainPrintImageUrl': fields.String,
     'FilamentId': fields.Integer,
@@ -305,6 +303,27 @@ class PrintDetailResp(Resource):
 
         http_resp = 404 if rows is None else 200
         return pt, http_resp
+
+    @api.marshal_with(printDetailModel, envelope='data')
+    def put(self, print_id):
+        prnt = db.session.query(Print).filter(Print.PrintId == print_id).one_or_none();
+        if prnt is None:
+            return None, 404
+
+        data = request.get_json()
+        prnt.PrintName = data['PrintName'] if data['PrintName'] is not None else prnt.PrintName
+        prnt.PrintDate = data['PrintDate'] if data['PrintDate'] is not None else prnt.PrintDate
+        prnt.SourceUrl = data['SourceUrl'] if data['SourceUrl'] is not None else prnt.SourceUrl
+
+        prnt.PrintTimeMinutes = data['PrintTimeMinutes'] if data['PrintTimeMinutes'] is not None else prnt.PrintTimeMinutes
+
+        prnt.FilamentId = data['FilamentId'] if data['FilamentId'] is not None else prnt.FilamentId
+        prnt.LengthUsed = data['LengthUsed'] if data['LengthUsed'] is not None else prnt.LengthUsed
+        prnt.PrinterId = data['PrinterId'] if data['PrinterId'] is not None else prnt.PrinterId
+
+        db.session.add(prnt)
+        db.session.commit()
+        return prnt
 
 
 if __name__ == "__main__":
