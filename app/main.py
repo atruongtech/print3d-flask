@@ -10,6 +10,7 @@ from printapp_sqlalchemy.printapp_sqlalchemy import (Filament,
                                                      connectionUri,
                                                      Image
                                                      )
+from auth_decorators import required_apikey
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = connectionUri
@@ -81,14 +82,10 @@ printDetailModel = api.model('PrintModel', {
     'LengthUsed': fields.Integer,
 })
 
-@api.route('/hello')
-class HelloWorld(Resource):
-    def get(self):
-        return {'hello':'world'}
-
 @api.route('/filaments/filamentdetails/<int:filament_id>')
 @api.doc(params={'filament_id': 'Global filament id.'})
 class FilamentResp(Resource):
+    @required_apikey
     @api.marshal_with(filamentDetailModel, envelope='data')
     def get(self, filament_id):
         row = db.session.query(Filament,
@@ -116,6 +113,7 @@ class FilamentResp(Resource):
 
         return filament
 
+    @required_apikey
     @api.marshal_with(filamentDetailModel, envelope='data')
     def put(self, filament_id):
         filament = db.session.query(Filament).filter(Filament.FilamentId == filament_id).one_or_none()
@@ -142,6 +140,7 @@ class FilamentResp(Resource):
 @api.route('/filaments/<int:user_id>')
 @api.doc(params={'user_id': 'ID of the user to retrieve info for.'})
 class FilamentLibraryResp(Resource):
+    @required_apikey
     @api.marshal_with(filamentDetailModel, envelope="data")
     def get(self, user_id):
         rows = db.session.query(Filament,
@@ -163,6 +162,7 @@ class FilamentLibraryResp(Resource):
 @api.route('/filaments/colors')
 @api.doc()
 class FilamentColorsResp(Resource):
+    @required_apikey
     @api.marshal_with(filamentColorModel, envelope='data')
     def get(self):
         colors = db.session.query(ColorFamily).order_by(ColorFamily.ColorFamilyName.asc()).all()
@@ -172,6 +172,7 @@ class FilamentColorsResp(Resource):
 @api.route('/printers/<int:user_id>')
 @api.doc(params={'user_id': 'ID of user to retrieve info for.'})
 class PrinterLibraryResp(Resource):
+    @required_apikey
     @api.marshal_with(printerDetailModel, envelope='data')
     def get(self, user_id):
         rows = db.session.query(Printer,
@@ -193,6 +194,7 @@ class PrinterLibraryResp(Resource):
 @api.route('/printers/printerdetails/<int:printer_id>')
 @api.doc(params={'printer_id': 'Global ID of printer.'})
 class PrinterDetailResp(Resource):
+    @required_apikey
     @api.marshal_with(printerDetailModel, envelope='data')
     def get(self, printer_id):
         printer = db.session.query(Printer, Image.ImagePath.label("MainPrinterImageUrl"))\
@@ -218,6 +220,7 @@ class PrinterDetailResp(Resource):
         http_resp = 404 if printer is None else 200
         return retPrinter, http_resp
 
+    @required_apikey
     @api.marshal_with(printerDetailModel, envelope="data")
     def put(self, printer_id):
         data = request.get_json()
@@ -242,6 +245,7 @@ class PrinterDetailResp(Resource):
 @api.route('/prints/<int:user_id>')
 @api.doc(params={'user_id': 'ID of user to retrieve info for.'})
 class PrintLibraryResp(Resource):
+    @required_apikey
     @api.marshal_with(printDetailModel, envelope='data')
     def get(self, user_id):
         rows = db.session.query(Print,
@@ -273,6 +277,7 @@ class PrintLibraryResp(Resource):
 @api.route('/prints/printdetails/<int:print_id>')
 @api.doc(params={'print_id': 'Global ID of print to retrieve.'})
 class PrintDetailResp(Resource):
+    @required_apikey
     @api.marshal_with(printDetailModel, envelope='data')
     def get(self, print_id):
         rows = db.session.query(Print,
@@ -304,6 +309,7 @@ class PrintDetailResp(Resource):
         http_resp = 404 if rows is None else 200
         return pt, http_resp
 
+    @required_apikey
     @api.marshal_with(printDetailModel, envelope='data')
     def put(self, print_id):
         prnt = db.session.query(Print).filter(Print.PrintId == print_id).one_or_none();
