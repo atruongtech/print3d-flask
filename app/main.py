@@ -11,6 +11,7 @@ from printapp_sqlalchemy.printapp_sqlalchemy import (Filament,
                                                      Image
                                                      )
 from auth_decorators import required_apikey
+from image_handler import ImageHandler
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = connectionUri
@@ -331,6 +332,26 @@ class PrintDetailResp(Resource):
         db.session.commit()
         return prnt
 
+@api.route('/images/imagerequest')
+class ImageRequestResp(Resource):
+    def get(self):
+        imgHandler = ImageHandler()
+        presigned = imgHandler.get_presigned_post()
+        data = {'data':presigned}
+        return data
+
+    def put(self):
+        data = request.get_json()
+        prnt = db.session.query(Print).filter(Print.PrintId == data["PrintId"]).one_or_none()
+
+        if prnt is None:
+            return 404
+
+        img = prnt.images
+        img.ImagePath = data["ImageUrl"];
+        db.session.add(img);
+        db.session.commit();
+        return {'data':'Image path updated'}, 200
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', debug=True, ssl_context=('./certs/server.crt', './certs/server.key'))
