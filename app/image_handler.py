@@ -45,6 +45,18 @@ class ImageHandler():
         else:
             return False
 
+    def delete_file_by_key(self, file_key):
+        bucket = self.s3.Bucket(BUCKET_NAME)
+
+        objects_to_delete = []
+        objects_to_delete.append({'Key':file_key})
+
+        return bucket.delete_objects(
+            Delete={
+                'Objects':objects_to_delete
+            }
+        )
+
 if __name__ == "__main__":
     imgHandler = ImageHandler()
-    print(imgHandler.get_presigned_post())
+    print imgHandler.delete_file_by_key('GojjGjRP')

@@ -342,16 +342,43 @@ class ImageRequestResp(Resource):
 
     def put(self):
         data = request.get_json()
-        prnt = db.session.query(Print).filter(Print.PrintId == data["PrintId"]).one_or_none()
 
-        if prnt is None:
-            return 404
+        if data['PrintId'] is None and data['PrinterId'] is None:
+            return {'data':'Bad request. PrintId or PrinterId needs to be populated.'}, 400
+        elif data['PrintId'] is not None and data['PrinterId'] is not None:
+            return {'data':'Bad request. Only one of PrintId or PrinterId can be populated.'}, 400
+        elif data['PrintId'] is not None:
+            entity = db.session.query(Print).filter(Print.PrintId == data['PrintId']).one_or_none()
+        elif data['PrinterId'] is not None:
+            entity = db.session.query(Printer).filter(Printer.PrinterId == data['PrinterId']).one_or_none()
 
-        img = prnt.images
+        if entity is None:
+            return None, 404
+
+        img = entity.images
+        imgHandler = ImageHandler()
+
+        err = None
+        if img is not None:
+            try:
+                delete_resp = imgHandler.delete_file_by_key(img.ImagePath[img.ImagePath.rfind('/')+1:])
+            except:
+                err = 'Error deleting image from S3'
+        else:
+            img = Image()
+            img.PrintId = data['PrintId']
+            img.PrinterId = data['PrinterId']
+
         img.ImagePath = data["ImageUrl"];
         db.session.add(img);
         db.session.commit();
-        return {'data':'Image path updated'}, 200
+
+        if entity.images is None:
+            entity.images = img
+            db.session.add(entity)
+            db.session.commit()
+
+        return {'data':'Image path updated', 'errors':err}, 200
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', debug=True, ssl_context=('./certs/server.crt', './certs/server.key'))
