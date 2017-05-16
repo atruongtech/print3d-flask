@@ -313,33 +313,108 @@ class PrintDetailResp(Resource):
     @required_apikey
     @api.marshal_with(printDetailModel, envelope='data')
     def put(self, print_id):
-        prnt = db.session.query(Print).filter(Print.PrintId == print_id).one_or_none();
+        prnt = db.session.query(Print).filter(Print.PrintId == print_id).one_or_none()
         if prnt is None:
             return None, 404
 
         data = request.get_json()
-        prnt.PrintName = data['PrintName'] if data['PrintName'] is not None else prnt.PrintName
-        prnt.PrintDate = data['PrintDate'] if data['PrintDate'] is not None else prnt.PrintDate
-        prnt.SourceUrl = data['SourceUrl'] if data['SourceUrl'] is not None else prnt.SourceUrl
+        prnt.PrintName = data['PrintName']
+        prnt.PrintDate = data['PrintDate']
 
-        prnt.PrintTimeMinutes = data['PrintTimeMinutes'] if data['PrintTimeMinutes'] is not None else prnt.PrintTimeMinutes
+        if 'SourceUrl' in data:
+            prnt.SourceUrl = data['SourceUrl']
+        if 'Success' not in data:
+            prnt.Success = False
+        else:
+            prnt.Success = data['Success']
 
-        prnt.FilamentId = data['FilamentId'] if data['FilamentId'] is not None else prnt.FilamentId
-        prnt.LengthUsed = data['LengthUsed'] if data['LengthUsed'] is not None else prnt.LengthUsed
-        prnt.PrinterId = data['PrinterId'] if data['PrinterId'] is not None else prnt.PrinterId
+        old_time = prnt.PrintTimeMinutes
+        new_time = data['PrintTimeMinutes']
+        prnt.PrintTimeMinutes = data['PrintTimeMinutes']
+
+        old_length = prnt.LengthUsed
+        new_length = data['LengthUsed']
+        prnt.LengthUsed = data['LengthUsed']
+
+        new_filament = False
+        new_printer = False
+        if prnt.FilamentId == data['FilamentId'] and old_length != new_length:
+            prnt.filaments.LengthRemain += old_length
+            prnt.filaments.LengthRemain -= new_length
+        elif prnt.FilamentId != data['FilamentId']:
+            prnt.filaments.LengthRemain += old_length
+            prnt.FilamentId = data['FilamentId']
+            new_filament = True
+
+        if prnt.PrinterId == data['PrinterId'] and new_time != old_time:
+            prnt.printers.PrintTimeHours -= old_time/60
+            prnt.printers.PrintTimeHours =+ new_time/60
+        elif prnt.PrinterId != data['PrinterId']:
+            prnt.printers.PrintTimeHours -= old_time/60
+            prnt.PrinterId = data['PrinterId']
+            new_printer = True
 
         db.session.add(prnt)
+        db.session.commit()
+
+        if new_filament:
+            prnt.filaments.LengthRemain -= new_length
+            db.session.add(prnt.filaments)
+        if new_printer:
+            prnt.printers.PrintTimeHours += new_time/60
+            db.session.add(prnt.printers)
+        if new_filament or new_printer:
+            db.session.commit()
+
+        return prnt
+
+@api.route('/prints/create')
+class PrintCreateResp(Resource):
+    @required_apikey
+    @api.marshal_with(printDetailModel, envelope='data')
+    def post(self):
+        data = request.get_json()
+
+        prnt = Print()
+        prnt.UserId = data['UserId']
+        prnt.PrintName = data['PrintName']
+        prnt.PrintDate = data['PrintDate']
+        prnt.FilamentId = data['FilamentId']
+        prnt.LengthUsed = data['LengthUsed']
+        prnt.PrinterId = data['PrinterId']
+        prnt.PrintTimeMinutes = data['PrintTimeMinutes']
+
+        # optional fields
+        if 'SourceUrl' in data:
+            prnt.SourceUrl = data['SourceUrl']
+        if 'Success' in data:
+            prnt.Success = data['Success']
+
+        db.session.add(prnt)
+        db.session.commit()
+
+        filament = prnt.filaments
+        filament.LengthRemain -= prnt.LengthUsed
+        db.session.add(filament)
+
+        printer = prnt.printers
+        printer.PrintTimeHours += prnt.PrintTimeMinutes/60
+        printer.NumberOfPrints += 1
+        db.session.add(printer)
+
         db.session.commit()
         return prnt
 
 @api.route('/images/imagerequest')
 class ImageRequestResp(Resource):
+    @required_apikey
     def get(self):
         imgHandler = ImageHandler()
         presigned = imgHandler.get_presigned_post()
         data = {'data':presigned}
         return data
 
+    @required_apikey
     def put(self):
         data = request.get_json()
 
