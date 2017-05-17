@@ -13,6 +13,8 @@ from printapp_sqlalchemy.printapp_sqlalchemy import (Filament,
 from auth_decorators import required_apikey
 from image_handler import ImageHandler
 
+from helpers.helper_methods import *
+
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = connectionUri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -160,6 +162,33 @@ class FilamentLibraryResp(Resource):
         http_resp = 404 if rows is None else 200
         return filaments, http_resp
 
+@api.route('/filaments/create')
+class FilamentCreateResp(Resource):
+    @required_apikey
+    @api.marshal_with(filamentDetailModel, envelope='data')
+    def post(self):
+        data = request.get_json()
+
+        max_filament_id = db.session.query(db.func.max(Filament.UserFilamentId).label('max_id'))\
+                                    .filter(Filament.UserId == data['UserId'])\
+                                    .one()
+        filament = Filament()
+        filament.Brand = data['Brand']
+        filament.Material = data['Material']
+        filament.LengthRemain = data['LengthRemain']
+        filament.ColorFamilyId = data['ColorId']
+        filament.DateAcquired = data['DateAcquired']
+        filament.FilamentSource = data['FilamentSource']
+        filament.HtmlColor = data['HtmlColor']
+        filament.UserId = data['UserId']
+        filament.UserFilamentId = max_filament_id.max_id + 1
+
+        db.session.add(filament)
+        db.session.commit()
+
+        return filament
+
+
 @api.route('/filaments/colors')
 @api.doc()
 class FilamentColorsResp(Resource):
@@ -229,19 +258,44 @@ class PrinterDetailResp(Resource):
         if printer is None:
             return None, 404
 
-        printer.PrinterName = data['PrinterName'] if data['PrinterName'] is not None else printer.PrinterName
-        printer.DateAcquired = data['DateAcquired'] if data['DateAcquired'] is not None else printer.DateAcquired
-        printer.PrinterSource = data['PrinterSource'] if data['PrinterSource'] is not None else printer.PrinterSource
-        printer.BeltMaintInt = data['BeltMaintInt'] if data['BeltMaintInt'] is not None else printer.BeltMaintInt
-        printer.WireMaintInt = data['WireMaintInt'] if data['WireMaintInt'] is not None else printer.WireMaintInt
-        printer.LubeMaintInt = data['LubeMaintInt'] if data['LubeMaintInt'] is not None else printer.LubeMaintInt
+        printer.PrinterName = data['PrinterName']
+        printer.DateAcquired = data['DateAcquired']
 
-        db.session.add(printer);
-        db.session.commit();
+        printer.PrinterSource = extract_optional(data, 'PrinterSource')
+        printer.BeltMaintInt = extract_optional(data,'BeltMaintInt')
+        printer.WireMaintInt = extract_optional(data,'WireMaintInt')
+        printer.LubeMaintInt = extract_optional(data,'LubeMaintInt')
+
+        db.session.add(printer)
+        db.session.commit()
         return printer
 
+@api.route('/printers/create')
+class PrinterCreateResp(Resource):
+    @required_apikey
+    @api.marshal_with(printerDetailModel, envelope='data')
+    def post(self):
+        data = request.get_json()
+        max_printer_id = db.session.query(db.func.max(Printer.UserPrinterId).label('max_id'))\
+            .filter(Printer.UserId == data['UserId'])\
+            .one()
 
+        printer = Printer()
+        printer.PrinterName = data['PrinterName']
+        printer.DateAcquired = data['DateAcquired']
+        printer.PrinterSource = extract_optional(data, 'PrinterSource')
+        printer.BeltMaintInt = data['BeltMaintInt']
+        printer.WireMaintInt = data['WireMaintInt']
+        printer.LubeMaintInt = data['LubeMaintInt']
+        printer.UserPrinterId = max_printer_id.max_id + 1
+        printer.PrintTimeHours = 0
+        printer.NumberOfPrints = 0
+        printer.UserId = data['UserId']
 
+        db.session.add(printer)
+        db.session.commit()
+
+        return printer
 
 @api.route('/prints/<int:user_id>')
 @api.doc(params={'user_id': 'ID of user to retrieve info for.'})
@@ -321,8 +375,7 @@ class PrintDetailResp(Resource):
         prnt.PrintName = data['PrintName']
         prnt.PrintDate = data['PrintDate']
 
-        if 'SourceUrl' in data:
-            prnt.SourceUrl = data['SourceUrl']
+        prnt.SourceUrl = extract_optional(data, 'SourceUrl')
         if 'Success' not in data:
             prnt.Success = False
         else:
@@ -339,18 +392,18 @@ class PrintDetailResp(Resource):
         new_filament = False
         new_printer = False
         if prnt.FilamentId == data['FilamentId'] and old_length != new_length:
-            prnt.filaments.LengthRemain += old_length
-            prnt.filaments.LengthRemain -= new_length
+            prnt.filaments.LengthRemain = add_quantity(old_length,prnt.filaments.LengthRemain)
+            prnt.filaments.LengthRemain = remove_quantity(new_length,prnt.filaments.LengthRemain)
         elif prnt.FilamentId != data['FilamentId']:
-            prnt.filaments.LengthRemain += old_length
+            prnt.filaments.LengthRemain = add_quantity(old_length,prnt.filaments.LengthRemain)
             prnt.FilamentId = data['FilamentId']
             new_filament = True
 
         if prnt.PrinterId == data['PrinterId'] and new_time != old_time:
-            prnt.printers.PrintTimeHours -= old_time/60
-            prnt.printers.PrintTimeHours =+ new_time/60
+            prnt.printers.PrintTimeHours = remove_quantity(old_time/60,prnt.printers.PrintTimeHours)
+            prnt.printers.PrintTimeHours = add_quantity(new_time/60,prnt.printers.PrintTimeHours)
         elif prnt.PrinterId != data['PrinterId']:
-            prnt.printers.PrintTimeHours -= old_time/60
+            prnt.printers.PrintTimeHours = remove_quantity(old_time,prnt.printers.PrintTimeHours)
             prnt.PrinterId = data['PrinterId']
             new_printer = True
 
@@ -358,15 +411,25 @@ class PrintDetailResp(Resource):
         db.session.commit()
 
         if new_filament:
-            prnt.filaments.LengthRemain -= new_length
+            prnt.filaments.LengthRemain = remove_quantity(new_length,prnt.filaments.LengthRemain)
             db.session.add(prnt.filaments)
         if new_printer:
-            prnt.printers.PrintTimeHours += new_time/60
+            prnt.printers.PrintTimeHours = add_quantity(new_time/60,prnt.printers.PrintTimeHours)
             db.session.add(prnt.printers)
         if new_filament or new_printer:
             db.session.commit()
 
         return prnt
+
+    @required_apikey
+    def delete(self, print_id):
+        user_id = request.headers.get('UserId')
+        n_Deletes = db.session.query(Print).filter(Print.PrintId == print_id and Print.UserId == user_id).delete()
+
+        db.session.commit()
+
+        return {'data': n_Deletes}
+
 
 @api.route('/prints/create')
 class PrintCreateResp(Resource):
@@ -394,12 +457,12 @@ class PrintCreateResp(Resource):
         db.session.commit()
 
         filament = prnt.filaments
-        filament.LengthRemain -= prnt.LengthUsed
+        filament.LengthRemain = remove_quantity(prnt.LengthUsed, filament.LengthRemain)
         db.session.add(filament)
 
         printer = prnt.printers
-        printer.PrintTimeHours += prnt.PrintTimeMinutes/60
-        printer.NumberOfPrints += 1
+        printer.PrintTimeHours = add_quantity(prnt.PrintTimeMinutes/60, printer.PrintTimeHours)
+        printer.NumberOfPrints = add_quantity(1, printer.NumberOfPrints)
         db.session.add(printer)
 
         db.session.commit()
@@ -426,6 +489,8 @@ class ImageRequestResp(Resource):
             entity = db.session.query(Print).filter(Print.PrintId == data['PrintId']).one_or_none()
         elif data['PrinterId'] is not None:
             entity = db.session.query(Printer).filter(Printer.PrinterId == data['PrinterId']).one_or_none()
+        else:
+            entity = None
 
         if entity is None:
             return None, 404
@@ -444,9 +509,9 @@ class ImageRequestResp(Resource):
             img.PrintId = data['PrintId']
             img.PrinterId = data['PrinterId']
 
-        img.ImagePath = data["ImageUrl"];
-        db.session.add(img);
-        db.session.commit();
+        img.ImagePath = data["ImageUrl"]
+        db.session.add(img)
+        db.session.commit()
 
         if entity.images is None:
             entity.images = img
