@@ -5,7 +5,7 @@ from string import ascii_lowercase, ascii_uppercase
 from random import choice
 from time import time
 
-from configs.s3_configs import *
+from app.configs.s3_configs import *
 
 class ImageHandler():
 

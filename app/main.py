@@ -8,12 +8,13 @@ from printapp_sqlalchemy.printapp_sqlalchemy import (Filament,
                                                      Printer,
                                                      Print,
                                                      connectionUri,
-                                                     Image
+                                                     Image, User
                                                      )
 from auth_decorators import required_apikey
-from image_handler import ImageHandler
+from image_handler.image_handler import ImageHandler
 
 from helpers.helper_methods import *
+from auth0.auth0_custom import Auth0UserManager
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = connectionUri
@@ -172,6 +173,8 @@ class FilamentCreateResp(Resource):
         max_filament_id = db.session.query(db.func.max(Filament.UserFilamentId).label('max_id'))\
                                     .filter(Filament.UserId == data['UserId'])\
                                     .one()
+        max_id = max_filament_id.max_id if max_filament_id.max_id is not None else 0
+
         filament = Filament()
         filament.Brand = data['Brand']
         filament.Material = data['Material']
@@ -181,7 +184,7 @@ class FilamentCreateResp(Resource):
         filament.FilamentSource = data['FilamentSource']
         filament.HtmlColor = data['HtmlColor']
         filament.UserId = data['UserId']
-        filament.UserFilamentId = max_filament_id.max_id + 1
+        filament.UserFilamentId = max_id + 1
 
         db.session.add(filament)
         db.session.commit()
@@ -279,6 +282,7 @@ class PrinterCreateResp(Resource):
         max_printer_id = db.session.query(db.func.max(Printer.UserPrinterId).label('max_id'))\
             .filter(Printer.UserId == data['UserId'])\
             .one()
+        max_id = max_printer_id.max_id if max_printer_id.max_id is not None else 0
 
         printer = Printer()
         printer.PrinterName = data['PrinterName']
@@ -287,7 +291,7 @@ class PrinterCreateResp(Resource):
         printer.BeltMaintInt = data['BeltMaintInt']
         printer.WireMaintInt = data['WireMaintInt']
         printer.LubeMaintInt = data['LubeMaintInt']
-        printer.UserPrinterId = max_printer_id.max_id + 1
+        printer.UserPrinterId = max_id + 1
         printer.PrintTimeHours = 0
         printer.NumberOfPrints = 0
         printer.UserId = data['UserId']
@@ -519,6 +523,23 @@ class ImageRequestResp(Resource):
             db.session.commit()
 
         return {'data':'Image path updated', 'errors':err}, 200
+
+@api.route('/users/create')
+class UserCreateResp(Resource):
+    def post(self):
+        data = request.get_json()
+
+        user = User()
+        user.Auth0UserId = data['auth0UserId']
+
+        db.session.add(user)
+        db.session.commit()
+
+        auth_manager = Auth0UserManager()
+        auth_manager.get_bearer()
+        profile = auth_manager.set_app_metadata(data['auth0UserId'],user.UserId)
+
+        return {'data': profile }
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', debug=True, ssl_context=('./certs/server.crt', './certs/server.key'))
