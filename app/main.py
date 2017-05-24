@@ -301,6 +301,30 @@ class PrinterCreateResp(Resource):
 
         return printer
 
+@api.route('/printers/maintenance/<string:maint_type>/<int:printer_id>')
+@api.doc(params={'maint_type': 'wire, lube, or belt.', 'printer_id': 'Global ID of printer to update.'})
+class PrinterMaintResp(Resource):
+    @required_apikey
+    @api.marshal_with(printerDetailModel, envelope='data')
+    def put(self, maint_type, printer_id):
+        printer = db.session.query(Printer).filter(Printer.PrinterId == printer_id).one_or_none()
+        if printer is None:
+            return 404
+
+        if maint_type == 'wire':
+            printer.WireMaintLast = printer.PrintTimeHours
+        elif maint_type == 'lube':
+            printer.LubeMaintLast = printer.PrintTimeHours
+        elif maint_type == 'belt':
+            printer.BeltMaintLast = printer.PrintTimeHours
+        else:
+            return {'data':'Wrong maint_type specified.'}, 400
+
+        db.session.add(printer)
+        db.session.commit()
+
+        return printer, 200
+
 @api.route('/prints/<int:user_id>')
 @api.doc(params={'user_id': 'ID of user to retrieve info for.'})
 class PrintLibraryResp(Resource):
